@@ -1,0 +1,25 @@
+name: supply-chain-advanced
+description: Multi-objective supply chain disruption simulator with partial observability
+
+entrypoint: server.py
+
+actions:
+  - reroute
+  - change_supplier
+  - increase_inventory
+  - delay_orders
+
+observation_space:
+  inventory: int
+  supplier_delay: int
+  transport_cost: float
+  backlog: int
+  step: int
+  demand_signal: int
+
+reward_range: [0.0, 1.0]
+
+tasks:
+  - easy
+  - medium
+  - hard
