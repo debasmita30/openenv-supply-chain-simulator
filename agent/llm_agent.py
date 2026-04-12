@@ -1,5 +1,3 @@
-
-
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -8,7 +6,7 @@ from openai import OpenAI
 load_dotenv()
 
 API_BASE = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-API_KEY = os.getenv("HF_TOKEN", "")
+API_KEY = os.getenv("HF_TOKEN", "") or os.getenv("OPENAI_API_KEY", "")
 MODEL = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
 # ===== ALLOWED ACTIONS =====
@@ -19,11 +17,17 @@ ALLOWED_ACTIONS = [
     "delay_orders"
 ]
 
-# ===== INIT CLIENT =====
+# ===== INIT CLIENT (safe) =====
 client = None
-if API_KEY:
-    client = OpenAI(base_url=API_BASE, api_key=API_KEY)
-
+try:
+    if API_KEY:
+        client = OpenAI(base_url=API_BASE, api_key=API_KEY)
+        print(f"[DEBUG] LLM client initialized. Model={MODEL}, Base={API_BASE}")
+    else:
+        print("[DEBUG] No API key found — will use fallback policy only")
+except Exception as e:
+    print(f"[DEBUG] Client init failed: {e} — falling back to rule-based policy")
+    client = None
 
 # ===== FALLBACK POLICY (SMART + SELF-CORRECTING) =====
 def fallback_policy(state, memory):
@@ -35,7 +39,6 @@ def fallback_policy(state, memory):
 
     recent_rewards = [m["reward"] for m in memory] if memory else []
     recent_actions = [m["action"]["type"] for m in memory] if memory else []
-
     avg_reward = sum(recent_rewards) / len(recent_rewards) if recent_rewards else 0
 
     # --- break loops ---
@@ -63,18 +66,14 @@ def fallback_policy(state, memory):
             return {"type": "increase_inventory"}
         else:
             return {"type": "reroute"}
-
     if delay > 3:
         return {"type": "reroute"}
-
     if backlog > 60:
         return {"type": "change_supplier"}
-    
     if cost > 2.0:
         if delay > 1:
             return {"type": "reroute"}
         return {"type": "delay_orders"}
-
     if cost > 2.2:
         return {"type": "delay_orders"}
 
@@ -84,21 +83,17 @@ def fallback_policy(state, memory):
     else:
         return {"type": "reroute"}
 
-
 # ===== LLM DECISION =====
 def llm_decide(state, memory):
     SYSTEM_PROMPT = """
 You are an expert supply chain optimizer.
-
 Goals:
 - maximize fulfillment
 - minimize backlog
 - minimize cost
-
 Return ONLY one word:
 reroute, change_supplier, increase_inventory, delay_orders
 """
-
     prompt = f"""
 State:
 {state}
@@ -108,7 +103,6 @@ Recent History:
 
 Best action?
 """
-
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -117,26 +111,20 @@ Best action?
         ],
         temperature=0,
     )
-
     action = response.choices[0].message.content.strip().lower()
+    action = action.split()[0].rstrip(".,!?")
     return action
-
 
 # ===== SAFE DECIDE (FINAL) =====
 def decide(state, memory):
     try:
-        # no API → fallback
         if not client:
             return fallback_policy(state, memory)
-
         action = llm_decide(state, memory)
-
-        # validate
         if action not in ALLOWED_ACTIONS:
+            print(f"[DEBUG] Invalid LLM action '{action}', using fallback")
             return fallback_policy(state, memory)
-
         return {"type": action}
-
-    except Exception:
-        # ANY failure → fallback
+    except Exception as e:
+        print(f"[DEBUG] decide() exception: {e}, using fallback")
         return fallback_policy(state, memory)
