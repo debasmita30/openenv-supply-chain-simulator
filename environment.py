@@ -5,38 +5,44 @@ class SupplyChainEnv:
     def __init__(self, seed=42):
         self.rng = random.Random(seed)
         self.max_steps = 12
+        self.true_demand = 100
+        self.pending_penalty = 0
+        self.current_state = {
+            "inventory": 100,
+            "supplier_delay": 2,
+            "transport_cost": 1.0,
+            "backlog": 0,
+            "step": 0
+        }
 
     def reset(self, config=None):
-     
         self.true_demand = self.rng.randint(80, 120)
-
         if config:
-            self.state = {
-                "inventory": config["inventory"],
-                "supplier_delay": config["supplier_delay"],
-                "transport_cost": config["transport_cost"],
-                "backlog": config["backlog"],
+            self.current_state = {
+                "inventory": config.get("inventory", 100),
+                "supplier_delay": config.get("supplier_delay", 2),
+                "transport_cost": config.get("transport_cost", 1.0),
+                "backlog": config.get("backlog", 0),
                 "step": 0
             }
         else:
-            self.state = {
+            self.current_state = {
                 "inventory": 100,
                 "supplier_delay": 2,
                 "transport_cost": 1.0,
                 "backlog": 0,
                 "step": 0
             }
-
         self.pending_penalty = 0
         return self._observe()
 
     def _observe(self):
-        obs = self.state.copy()
+        obs = self.current_state.copy()
         obs["demand_signal"] = self.true_demand + self.rng.randint(-10, 10)
         return obs
 
     def step(self, action):
-        s = self.state
+        s = self.current_state
         a = action["type"]
 
         # --- delayed penalty ---
@@ -47,15 +53,12 @@ class SupplyChainEnv:
         if a == "reroute":
             s["supplier_delay"] = max(0, s["supplier_delay"] - 1)
             s["transport_cost"] += 0.2
-
         elif a == "change_supplier":
             s["supplier_delay"] = self.rng.randint(1, 4)
             self.pending_penalty = 0.1
-
         elif a == "increase_inventory":
             s["inventory"] += 20
             s["transport_cost"] += 0.1
-
         elif a == "delay_orders":
             s["backlog"] += 5
 
@@ -63,23 +66,21 @@ class SupplyChainEnv:
         if self.rng.random() < 0.25:
             s["supplier_delay"] += 1
 
-        # --- demand evolution (CONTROLLED) ---
+        # --- demand evolution ---
         self.true_demand += self.rng.randint(-5, 10)
         self.true_demand = max(40, min(150, self.true_demand))
 
-        # --- fulfillment (CONTROLLED DRAIN) ---
+        # --- fulfillment ---
         fulfilled = min(s["inventory"], int(self.true_demand * 0.6))
         s["inventory"] -= fulfilled
-
         unmet = self.true_demand - fulfilled
         s["backlog"] = min(200, s["backlog"] + unmet)
 
         # --- cap cost ---
         s["transport_cost"] = min(2.5, s["transport_cost"])
 
-        # --- reward shaping (FINAL FIX) ---
+        # --- reward shaping ---
         fulfillment_ratio = fulfilled / (self.true_demand + 1)
-
         cost_norm = min(1.0, s["transport_cost"] / 3.0)
         backlog_norm = min(1.0, s["backlog"] / 150.0)
 
@@ -88,13 +89,9 @@ class SupplyChainEnv:
             0.15 * (1 - cost_norm) +
             0.15 * (1 - backlog_norm)
         )
-
         reward = max(0.1, reward)
-
-        # small penalties
         reward -= 0.005
         reward -= delayed_penalty * 0.5
-
         reward = min(1.0, reward)
 
         # --- step ---
@@ -107,6 +104,3 @@ class SupplyChainEnv:
             done=done,
             info={"true_demand": self.true_demand}
         )
-
-    def state(self):
-        return self._observe()
