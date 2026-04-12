@@ -103,17 +103,21 @@ Recent History:
 
 Best action?
 """
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0,
-    )
-    action = response.choices[0].message.content.strip().lower()
-    action = action.split()[0].rstrip(".,!?")
-    return action
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0,
+        )
+        action = response.choices[0].message.content.strip().lower()
+        action = action.split()[0].rstrip(".,!?")
+        return action
+    except Exception as e:
+        print(f"[DEBUG] llm_decide failed: {e}")
+        return None
 
 # ===== SAFE DECIDE (FINAL) =====
 def decide(state, memory):
@@ -121,8 +125,8 @@ def decide(state, memory):
         if not client:
             return fallback_policy(state, memory)
         action = llm_decide(state, memory)
-        if action not in ALLOWED_ACTIONS:
-            print(f"[DEBUG] Invalid LLM action '{action}', using fallback")
+        if not action or action not in ALLOWED_ACTIONS:
+            print(f"[DEBUG] Invalid/None LLM action '{action}', using fallback")
             return fallback_policy(state, memory)
         return {"type": action}
     except Exception as e:
